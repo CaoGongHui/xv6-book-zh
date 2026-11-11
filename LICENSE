@@ -1,0 +1,9 @@
+This work is a Simplified Chinese translation of
+"xv6: a simple, Unix-like teaching operating system"
+by Russ Cox, Frans Kaashoek, and Robert Morris
+(https://mit-pdos.github.io/xv6-riscv-book/).
+
+The original work and this translation are licensed under the
+Creative Commons Attribution 3.0 Unported License (CC BY 3.0).
+To view a copy of this license, visit
+https://creativecommons.org/licenses/by/3.0/
