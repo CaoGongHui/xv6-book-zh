@@ -22,7 +22,7 @@ release(&lk);
 
 ## 7.1 竞争
 
-![图 7.1：简化的 SMP 架构](https://mit-pdos.github.io/xv6-riscv-book/fig/smp.svg)
+![图 7.1：简化的 SMP 架构](fig/smp.svg)
 
 *图 7.1：简化的 SMP 架构。*
 
@@ -50,7 +50,7 @@ release(&lk);
    }
 ```
 
-![图 7.2：竞争示例](https://mit-pdos.github.io/xv6-riscv-book/fig/race.svg)
+![图 7.2：竞争示例](fig/race.svg)
 
 *图 7.2：竞争示例。*
 
@@ -162,7 +162,7 @@ xv6 在很多地方使用锁来避免竞争。如前所述，[`kalloc`](https://
 
 假设在 CPU C1 和 C2 上运行的函数，各自都有某个时刻需要同时持有锁 A 和锁 B，而它们获取这两把锁的顺序不同：
 
-![加锁顺序示意](https://mit-pdos.github.io/xv6-riscv-book/fig/order.svg)
+![加锁顺序示意](fig/order.svg)
 
 如果运气不好，C1 和 C2 可能恰好在同一时刻执行各自的第一次 acquire；两者都能成功，因为它们请求的是不同的锁。但接下来 C1 和 C2 都得在第二次调用 `acquire()` 时等待，因为两把锁都已被对方 CPU 持有。由于两个 CPU 都在等对方，谁也不会释放锁，两者会永远等下去。这种情况称为**死锁**（deadlock）。
 

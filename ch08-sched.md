@@ -16,7 +16,7 @@ xv6 在两种情况下把每个 CPU 从一个进程切换到另一个进程，�
 
 “**上下文切换**”（context switch）一词指的是这样一组步骤：CPU 停止执行一个内核线程（通常以后还会恢复），转而恢复执行另一个内核线程。这种切换是多路复用的核心。xv6 并不直接从一个进程的内核线程切换到另一个进程的内核线程；而是由内核线程通过上下文切换到该 CPU 的“**调度器线程**”（scheduler thread）来让出 CPU，再由调度器线程挑选另一个进程的内核线程来运行，并通过上下文切换转到那个线程。
 
-![图 8.1：从一个用户进程切换到另一个用户进程](https://mit-pdos.github.io/xv6-riscv-book/fig/switch.svg)
+![图 8.1：从一个用户进程切换到另一个用户进程](fig/switch.svg)
 
 *图 8.1：从一个用户进程切换到另一个用户进程。这个例子中，xv6 运行在单个 CPU 上（因此只有一个调度器线程）。*
 
@@ -61,7 +61,7 @@ swtch:
 
 [`scheduler`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/proc.c#L429) 运行一个循环：找到一个要运行的进程，`swtch()` 到它那里，最终该进程会 `swtch()` 回到调度器，调度器继续它的循环。调度器遍历进程表，寻找可运行的进程，即 `p->state` `==` `RUNNABLE` 的进程。一旦找到，它就设置每 CPU 的当前进程变量 `c->proc`，把该进程标记为 `RUNNING`，然后调用 `swtch` 开始运行它[（proc.c:448-453）](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/proc.c#L448-L453)。在过去的某个时刻，目标进程一定调用过 `swtch()`；调度器对 `swtch()` 的调用实际上是让那次更早的调用返回。图 8.2 展示了这种模式。
 
-![图 8.2：swtch() 的源或目标总有一个是调度器线程](https://mit-pdos.github.io/xv6-riscv-book/fig/switch.svg)
+![图 8.2：swtch() 的源或目标总有一个是调度器线程](fig/switch.svg)
 
 *图 8.2：`swtch()` 的源或目标总有一个是调度器线程，并且相关的 `p->lock` 始终处于持有状态。*
 
