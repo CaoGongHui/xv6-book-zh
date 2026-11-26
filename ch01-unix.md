@@ -26,7 +26,7 @@
 
 shell 是一个普通程序，它从用户那里读取命令并执行。shell 是用户程序而不是内核的一部分，这说明了系统调用接口的强大：shell 没有任何特殊之处。这也意味着 shell 很容易替换，所以现代 Unix 系统有各种 shell 可选，每种都有自己的用户界面和脚本功能。xv6 shell 是对 Unix Bourne shell 核心功能的简单实现。
 
-xv6 shell 的实现位于 [`user/sh.c`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/user/sh.c)。书中这类链接指向 <https://github.com/mit-pdos/xv6-riscv/> 上对应的 xv6 源码，括号里的编号对应 xv6-src-booklet.pdf 中的页号和行号，做法与 Lions 的《UNIX 第 6 版注释》（Lions 2000）相同。一个好习惯是先自己读源码（在你喜欢的开发环境、GitHub 或 PDF 阅读器里），再回来看本书。读完本书后，你应该能在不查阅本书的情况下看懂 xv6 的每一行源码。
+xv6 shell 的实现位于 [`user/sh.c`](../user/sh.c)。书中这类链接指向 <https://github.com/mit-pdos/xv6-riscv/> 上对应的 xv6 源码，括号里的编号对应 xv6-src-booklet.pdf 中的页号和行号，做法与 Lions 的《UNIX 第 6 版注释》（Lions 2000）相同。一个好习惯是先自己读源码（在你喜欢的开发环境、GitHub 或 PDF 阅读器里），再回来看本书。读完本书后，你应该能在不查阅本书的情况下看懂 xv6 的每一行源码。
 
 ## 1.1 进程和内存
 
@@ -108,7 +108,7 @@ printf("exec error\n");
 
 这段代码把调用程序替换为 `/bin/echo` 程序的一个实例，参数列表是 `echo hello`。大多数程序会忽略参数数组的第一个元素，按惯例它是程序名。
 
-xv6 shell 用上面这些调用替用户运行程序。shell 的主体结构很简单，见 [`main`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/user/sh.c#L146)。主循环用 `getcmd` 从用户那里读入一行输入，然后调用 `fork` 创建 shell 进程的一个副本。父进程调用 `wait`，子进程执行命令。例如，如果用户在 shell 中输入“`echo hello`”，就会以“`echo hello`”为参数调用 `runcmd`。[`runcmd`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/user/sh.c#L59) 负责执行实际的命令。对于“`echo hello`”，它会调用 [`exec`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/user/sh.c#L79)。如果 `exec` 成功，子进程就会执行 `echo` 的指令，而不再执行 `runcmd`。`echo` 在某个时刻会调用 `exit`，这会让父进程从 [`main`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/user/sh.c#L146) 中的 `wait` 返回。
+xv6 shell 用上面这些调用替用户运行程序。shell 的主体结构很简单，见 [`main`](../user/sh.c#L146)。主循环用 `getcmd` 从用户那里读入一行输入，然后调用 `fork` 创建 shell 进程的一个副本。父进程调用 `wait`，子进程执行命令。例如，如果用户在 shell 中输入“`echo hello`”，就会以“`echo hello`”为参数调用 `runcmd`。[`runcmd`](../user/sh.c#L59) 负责执行实际的命令。对于“`echo hello`”，它会调用 [`exec`](../user/sh.c#L79)。如果 `exec` 成功，子进程就会执行 `echo` 的指令，而不再执行 `runcmd`。`echo` 在某个时刻会调用 `exit`，这会让父进程从 [`main`](../user/sh.c#L146) 中的 `wait` 返回。
 
 你可能会问，为什么 `fork` 和 `exec` 不合并成一个调用？后面会看到，shell 在实现 I/O 重定向时利用了这种分离。先创建一个重复的进程、又立即（用 `exec`）替换掉它，看起来很浪费。为了避免这种浪费，操作系统内核会针对这种用法优化 `fork` 的实现，使用写时复制（copy-on-write）等虚拟内存技术（见第 5 章）。
 
@@ -118,7 +118,7 @@ xv6 隐式地分配大部分用户空间内存：`fork` 分配子进程存放父
 
 **文件描述符**（file descriptor）是一个小整数，代表一个由内核管理、进程可以读写的对象。进程可以通过打开文件、目录或设备，创建管道，或复制已有的描述符来获得文件描述符。为了简单，我们常把文件描述符指向的对象称为“文件”。文件描述符接口抽象掉了文件、管道和设备之间的差异，让它们看起来都是字节流。我们把输入和输出称为 **I/O**。
 
-在 xv6 内核内部，文件描述符被用作每进程表的索引，所以每个进程都有一个从 0 开始的私有文件描述符空间。按惯例，进程从文件描述符 0（标准输入）读取，向文件描述符 1（标准输出）写输出，向文件描述符 2（标准错误）写错误信息。我们会看到，shell 利用这个惯例实现 I/O 重定向和管道。shell 确保自己始终打开着三个文件描述符[（sh.c:152）](https://github.com/mit-pdos/xv6-riscv/blob/riscv/user/sh.c#L152)，默认它们都是控制台的文件描述符。
+在 xv6 内核内部，文件描述符被用作每进程表的索引，所以每个进程都有一个从 0 开始的私有文件描述符空间。按惯例，进程从文件描述符 0（标准输入）读取，向文件描述符 1（标准输出）写输出，向文件描述符 2（标准错误）写错误信息。我们会看到，shell 利用这个惯例实现 I/O 重定向和管道。shell 确保自己始终打开着三个文件描述符[（sh.c:152）](../user/sh.c#L152)，默认它们都是控制台的文件描述符。
 
 `read` 和 `write` 系统调用从文件描述符指定的打开文件中读取字节、向其写入字节。调用 `read(fd, buf, n)` 从文件描述符 `fd` 最多读取 `n` 个字节，复制到 `buf` 中，并返回读到的字节数。每个指向文件的文件描述符都关联着一个偏移量。`read` 从当前文件偏移量处读取数据，然后把偏移量向前推进读到的字节数：之后的 `read` 会返回紧接在第一次 `read` 所返回字节之后的字节。没有更多字节可读时，`read` 返回 0，表示文件结束。
 
@@ -165,9 +165,9 @@ if(fork() == 0) {
 
 子进程关闭文件描述符 0 之后，`open` 一定会把这个描述符分配给新打开的 `input.txt`，因为 0 将是最小的可用文件描述符。然后 `cat` 运行时，文件描述符 0（标准输入）就指向 `input.txt`。这一系列操作只修改子进程的描述符，所以父进程的文件描述符不会改变。
 
-xv6 shell 中的 I/O 重定向代码正是这样工作的[（sh.c:83）](https://github.com/mit-pdos/xv6-riscv/blob/riscv/user/sh.c#L83)。回想一下，代码执行到这里时，shell 已经 fork 出了子 shell，`runcmd` 将调用 `exec` 加载新程序。
+xv6 shell 中的 I/O 重定向代码正是这样工作的[（sh.c:83）](../user/sh.c#L83)。回想一下，代码执行到这里时，shell 已经 fork 出了子 shell，`runcmd` 将调用 `exec` 加载新程序。
 
-`open` 的第二个参数是一组用二进制位表示的标志，控制 `open` 的行为。可选的值定义在文件控制（fcntl）头文件中[（fcntl.h:1-5）](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/fcntl.h#L1-L5)：`O_RDONLY`、`O_WRONLY`、`O_RDWR`、`O_CREATE` 和 `O_TRUNC`，分别让 `open` 以只读、只写、读写方式打开文件，在文件不存在时创建它，以及把文件截断为零长度。
+`open` 的第二个参数是一组用二进制位表示的标志，控制 `open` 的行为。可选的值定义在文件控制（fcntl）头文件中[（fcntl.h:1-5）](../kernel/fcntl.h#L1-L5)：`O_RDONLY`、`O_WRONLY`、`O_RDWR`、`O_CREATE` 和 `O_TRUNC`，分别让 `open` 以只读、只写、读写方式打开文件，在文件不存在时创建它，以及把文件截断为零长度。
 
 现在应该清楚 `fork` 和 `exec` 分成两个调用的好处了：在两者之间，shell 有机会重定向子进程的 I/O，而不会打乱主 shell 的 I/O 设置。也可以设想一个假想的合并调用 `forkexec`，但用它来做 I/O 重定向的办法都很别扭：shell 可以在调用 `forkexec` 之前修改自己的 I/O 设置（之后再撤销这些修改）；或者 `forkexec` 可以把 I/O 重定向的指令作为参数；或者（最不可取的）让 `cat` 这样的每个程序都学会自己做 I/O 重定向。
 
@@ -228,7 +228,7 @@ if(fork() == 0) {
 
 如果没有数据可读，对管道的 `read` 会一直等待，直到有数据写入，或者所有指向写端的文件描述符都被关闭；后一种情况下，`read` 返回 0，就像到达了数据文件的末尾一样。`read` 会一直阻塞到不可能再有新数据到来为止，这正是上面子进程必须在执行 `wc` 之前关闭管道写端的原因之一：如果 `wc` 的某个文件描述符指向管道的写端，`wc` 就永远等不到文件结束。
 
-xv6 shell 实现 `grep fork sh.c | wc -l` 这样的管道时，做法与上面的代码类似[（sh.c:101）](https://github.com/mit-pdos/xv6-riscv/blob/riscv/user/sh.c#L101)。子进程创建一个管道，把管道左边和右边连接起来。然后它为管道左边调用 `fork` 和 `runcmd`，为右边也调用 `fork` 和 `runcmd`，并等待两者结束。管道右边本身可能也是一个包含管道的命令（例如 `a | b | c`），它会再 fork 出两个新的子进程（一个运行 `b`，一个运行 `c`）。因此，shell 可能会创建一棵进程树。这棵树的叶子是命令，内部节点是等待左右子进程完成的进程。
+xv6 shell 实现 `grep fork sh.c | wc -l` 这样的管道时，做法与上面的代码类似[（sh.c:101）](../user/sh.c#L101)。子进程创建一个管道，把管道左边和右边连接起来。然后它为管道左边调用 `fork` 和 `runcmd`，为右边也调用 `fork` 和 `runcmd`，并等待两者结束。管道右边本身可能也是一个包含管道的命令（例如 `a | b | c`），它会再 fork 出两个新的子进程（一个运行 `b`，一个运行 `c`）。因此，shell 可能会创建一棵进程树。这棵树的叶子是命令，内部节点是等待左右子进程完成的进程。
 
 管道看起来并不比临时文件更强大。管道命令
 
@@ -271,7 +271,7 @@ mknod("/console", 1, 1);
 
 文件名与文件本身是分开的。同一个底层文件称为 **inode**，它可以有多个名字，这些名字称为**链接**（link）。每个链接是目录中的一个条目，条目包含一个文件名和对一个 inode 的引用。inode 保存文件的**元数据**（metadata），包括它的类型（文件、目录或设备）、长度、文件内容在磁盘上的位置，以及指向该文件的链接数。
 
-`fstat` 系统调用从文件描述符所指向的 inode 中获取信息。它填写一个 `struct stat`，定义在 [`stat.h`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/stat.h) 中：
+`fstat` 系统调用从文件描述符所指向的 inode 中获取信息。它填写一个 `struct stat`，定义在 [`stat.h`](../kernel/stat.h) 中：
 
 ```c
 #define T_DIR     1   // Directory
@@ -313,7 +313,7 @@ unlink("/tmp/xyz");
 
 Unix 把文件工具做成可以从 shell 调用的用户级程序，例如 `mkdir`、`ln` 和 `rm`。这种设计让任何人都可以通过添加新的用户级程序来扩展命令行界面。事后看来这个方案理所当然，但与 Unix 同时期设计的其他系统，常常把这类命令内置在 shell 中（而 shell 又内置在内核中）。
 
-一个例外是 `cd`，它是内置在 shell 中的[（sh.c:166）](https://github.com/mit-pdos/xv6-riscv/blob/riscv/user/sh.c#L166)。`cd` 必须改变 shell 自身的当前工作目录。如果 `cd` 作为普通命令运行，shell 就会 fork 出一个子进程，子进程运行 `cd`，`cd` 改变的是**子进程**的工作目录，父进程（也就是 shell）的工作目录不会改变。
+一个例外是 `cd`，它是内置在 shell 中的[（sh.c:166）](../user/sh.c#L166)。`cd` 必须改变 shell 自身的当前工作目录。如果 `cd` 作为普通命令运行，shell 就会 fork 出一个子进程，子进程运行 `cd`，`cd` 改变的是**子进程**的工作目录，父进程（也就是 shell）的工作目录不会改变。
 
 ## 1.5 现实世界
 

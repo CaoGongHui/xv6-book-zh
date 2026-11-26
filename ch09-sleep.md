@@ -4,7 +4,7 @@
 
 调度和锁有助于让一个线程的行为对另一个线程不可见，但我们还需要一些抽象，帮助线程有意地相互配合。例如，xv6 中管道的读者可能需要等待写进程产生数据；父进程调用 `wait` 时可能需要等待子进程退出；读磁盘的进程需要等待磁盘硬件完成读取。xv6 内核在这些（以及许多其他）场合使用一种称为睡眠与唤醒的机制。睡眠让内核线程等待某个**条件**（condition）成立；另一个线程或中断处理程序可以使该条件成立（通常是修改某些变量），然后调用 wakeup，表示等待该条件的线程应当恢复运行。睡眠与唤醒常被称为**顺序协调**（sequence coordination）或**条件同步**（conditional synchronization）机制。
 
-继续之前，请先阅读 [`kernel/proc.c`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/proc.c) 中的 `sleep_prepare()`、`sleep()` 和 `wakeup()` 函数，以及 [`kernel/pipe.c`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/pipe.c) 整个文件。
+继续之前，请先阅读 [`kernel/proc.c`](../kernel/proc.c) 中的 `sleep_prepare()`、`sleep()` 和 `wakeup()` 函数，以及 [`kernel/pipe.c`](../kernel/pipe.c) 整个文件。
 
 ## 9.1 概述
 
@@ -55,7 +55,7 @@ pipewrite(pipe){
 
 ## 9.2 代码：睡眠与唤醒
 
-xv6 的 [`sleep_prepare`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/proc.c#L547)、[`sleep`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/proc.c#L562) 和 [`wakeup`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/proc.c#L576) 实现了上面例子中使用的接口。基本思路是：`sleep` 把当前进程标记为 `SLEEPING`，然后调用 `sched` 释放 CPU；`wakeup` 查找在给定等待通道上睡眠的进程，并把它们标记为 `RUNNABLE`。
+xv6 的 [`sleep_prepare`](../kernel/proc.c#L547)、[`sleep`](../kernel/proc.c#L562) 和 [`wakeup`](../kernel/proc.c#L576) 实现了上面例子中使用的接口。基本思路是：`sleep` 把当前进程标记为 `SLEEPING`，然后调用 `sched` 释放 CPU；`wakeup` 查找在给定等待通道上睡眠的进程，并把它们标记为 `RUNNABLE`。
 
 `sleep_prepare(chan)` 把等待通道记录在 `p->chan` 中，然后返回。如果调用 `sleep()` 时 `p->chan` 仍然非零，`sleep()` 就把调用进程的状态改为 `SLEEPING`，并调用 `sched()` 让其他进程运行。
 
@@ -69,33 +69,33 @@ xv6 的 [`sleep_prepare`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kerne
 
 ## 9.3 代码：管道
 
-xv6 的管道是用睡眠来同步生产者和消费者的一个代码实例。我们在[第 1 章](https://mit-pdos.github.io/xv6-riscv-book/unix.html#CH:UNIX)中见过管道的接口：写入管道一端的字节被复制到内核中的缓冲区，然后可以从管道的另一端读出。后续章节会考察围绕管道的文件描述符支持，现在先来看 `pipewrite` 和 `piperead` 的实现。
+xv6 的管道是用睡眠来同步生产者和消费者的一个代码实例。我们在[第 1 章](ch01-unix.md)中见过管道的接口：写入管道一端的字节被复制到内核中的缓冲区，然后可以从管道的另一端读出。后续章节会考察围绕管道的文件描述符支持，现在先来看 `pipewrite` 和 `piperead` 的实现。
 
 每个管道用一个 `struct pipe` 表示，其中包含一个 `lock` 和一个 `data` 缓冲区。字段 `nread` 和 `nwrite` 分别统计从缓冲区读出和写入缓冲区的总字节数。缓冲区是环形的：在 `buf[PIPESIZE-1]` 之后写入的下一个字节是 `buf[0]`。而计数不会回绕。这一约定让实现能够区分满缓冲区（`nwrite` `==` `nread+PIPESIZE`）和空缓冲区（`nwrite` `==` `nread`），但这也意味着访问缓冲区时必须使用 `buf[nread` `%` `PIPESIZE]`，而不能直接用 `buf[nread]`（`nwrite` 同理）。
 
-假设 `piperead` 和 `pipewrite` 的调用同时发生在两个不同的 CPU 上。[`pipewrite`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/pipe.c#L77) 首先获取管道的锁，该锁保护计数、数据以及与之相关的不变量。接着 [`piperead`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/pipe.c#L112) 也试图获取这个锁，但获取不到。它在 [`acquire`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/spinlock.c#L22) 中自旋，等待锁。在 `piperead` 等待期间，`pipewrite` 循环处理要写入的字节（`addr[0..n-1]`），依次把每个字节加入管道[（pipe.c:101）](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/pipe.c#L101)。在这个循环中，缓冲区可能会被填满[（pipe.c:88）](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/pipe.c#L88)。这种情况下，`pipewrite` 调用 `wakeup`，通知所有睡眠的读者缓冲区中有数据在等待，然后释放锁，并在通道 `&pi->nwrite` 上睡眠，等待读者从缓冲区中取走一些字节。
+假设 `piperead` 和 `pipewrite` 的调用同时发生在两个不同的 CPU 上。[`pipewrite`](../kernel/pipe.c#L77) 首先获取管道的锁，该锁保护计数、数据以及与之相关的不变量。接着 [`piperead`](../kernel/pipe.c#L112) 也试图获取这个锁，但获取不到。它在 [`acquire`](../kernel/spinlock.c#L22) 中自旋，等待锁。在 `piperead` 等待期间，`pipewrite` 循环处理要写入的字节（`addr[0..n-1]`），依次把每个字节加入管道[（pipe.c:101）](../kernel/pipe.c#L101)。在这个循环中，缓冲区可能会被填满[（pipe.c:88）](../kernel/pipe.c#L88)。这种情况下，`pipewrite` 调用 `wakeup`，通知所有睡眠的读者缓冲区中有数据在等待，然后释放锁，并在通道 `&pi->nwrite` 上睡眠，等待读者从缓冲区中取走一些字节。
 
-此时 `piperead` 获取到管道的锁并进入临界区：它发现 `pi->nread` `!=` [`pi->nwrite`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/pipe.c#L119)（`pipewrite` 进入睡眠是因为 `pi->nwrite` `==` `pi->nread` `+` [`PIPESIZE`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/pipe.c#L88)），于是继续执行到 `for` 循环，把数据从管道中复制出来[（pipe.c:129）](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/pipe.c#L129)，并把 `nread` 增加所复制的字节数。缓冲区中现在有这么多空间可供写入了，所以 `piperead` 在返回前调用 [`wakeup`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/pipe.c#L140) 唤醒所有睡眠的写者。`wakeup` 找到一个在 `&pi->nwrite` 上睡眠的进程（就是那个运行 `pipewrite`、但因缓冲区满而停下的进程）。`wakeup` 把这个进程标记为 `RUNNABLE`。
+此时 `piperead` 获取到管道的锁并进入临界区：它发现 `pi->nread` `!=` [`pi->nwrite`](../kernel/pipe.c#L119)（`pipewrite` 进入睡眠是因为 `pi->nwrite` `==` `pi->nread` `+` [`PIPESIZE`](../kernel/pipe.c#L88)），于是继续执行到 `for` 循环，把数据从管道中复制出来[（pipe.c:129）](../kernel/pipe.c#L129)，并把 `nread` 增加所复制的字节数。缓冲区中现在有这么多空间可供写入了，所以 `piperead` 在返回前调用 [`wakeup`](../kernel/pipe.c#L140) 唤醒所有睡眠的写者。`wakeup` 找到一个在 `&pi->nwrite` 上睡眠的进程（就是那个运行 `pipewrite`、但因缓冲区满而停下的进程）。`wakeup` 把这个进程标记为 `RUNNABLE`。
 
 管道代码为读者和写者使用不同的等待通道（`&pi->nread` 和 `&pi->nwrite`）；当有大量读者和写者在等待同一个管道时，这可能会让系统更高效。管道代码在一个检查睡眠条件的循环中睡眠；如果有多个读者或写者，除了第一个被唤醒的进程，其余进程都会发现条件不成立，并再次睡眠。
 
 ## 9.4 代码：wait、exit 和 kill
 
-请阅读 [`kernel/proc.c`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/proc.c) 中函数 `kwait()`、`kexit()` 和 `kkill()` 的代码；它们是相应系统调用的内部实现。
+请阅读 [`kernel/proc.c`](../kernel/proc.c) 中函数 `kwait()`、`kexit()` 和 `kkill()` 的代码；它们是相应系统调用的内部实现。
 
-[第 1 章](https://mit-pdos.github.io/xv6-riscv-book/unix.html#CH:UNIX)中介绍过的子进程 `exit` 与父进程 `wait` 之间的交互，是一个有趣的睡眠实例。子进程死亡时，父进程可能已经在 `wait` 中睡眠，也可能在做别的事情；在后一种情况下，之后对 `wait` 的调用必须能察觉到子进程的死亡，这可能是子进程调用 `exit` 很久之后的事。xv6 记录子进程死亡、直到 `wait` 察觉的方式是：`exit` 把调用者置为 `ZOMBIE` 状态，它会一直停留在这个状态，直到父进程的 `wait` 注意到它，把子进程的状态改为 `UNUSED`，复制子进程的退出状态，并把子进程的进程 ID 返回给父进程。如果父进程先于子进程退出，父进程会把子进程交给 `init` 进程，而 `init` 永远在调用 `wait`；这样每个子进程都有一个父进程来为它善后。难点在于避免父进程 `wait` 与子进程 `exit` 同时发生、以及 `exit` 与 `exit` 同时发生时的竞争和死锁。
+[第 1 章](ch01-unix.md)中介绍过的子进程 `exit` 与父进程 `wait` 之间的交互，是一个有趣的睡眠实例。子进程死亡时，父进程可能已经在 `wait` 中睡眠，也可能在做别的事情；在后一种情况下，之后对 `wait` 的调用必须能察觉到子进程的死亡，这可能是子进程调用 `exit` 很久之后的事。xv6 记录子进程死亡、直到 `wait` 察觉的方式是：`exit` 把调用者置为 `ZOMBIE` 状态，它会一直停留在这个状态，直到父进程的 `wait` 注意到它，把子进程的状态改为 `UNUSED`，复制子进程的退出状态，并把子进程的进程 ID 返回给父进程。如果父进程先于子进程退出，父进程会把子进程交给 `init` 进程，而 `init` 永远在调用 `wait`；这样每个子进程都有一个父进程来为它善后。难点在于避免父进程 `wait` 与子进程 `exit` 同时发生、以及 `exit` 与 `exit` 同时发生时的竞争和死锁。
 
-`kwait` 是 `wait` 的内核实现，它首先获取 [`wait_lock`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/proc.c#L370)，这个锁充当条件锁，帮助确保 `kwait` 不会错过正在退出的子进程发出的 `wakeup`。然后 `kwait` 扫描进程表。如果找到处于 `ZOMBIE` 状态的子进程，它就释放该子进程的资源及其 `proc` 结构体，把子进程的退出状态复制到传给 `wait` 的地址（如果该地址不为 0），并返回子进程的进程 ID。如果 `kwait` 找到了子进程但都还没有退出，它就睡眠，等待其中任意一个退出[（proc.c:414）](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/proc.c#L414)，然后再次扫描。`kwait` 经常同时持有两个锁：`wait_lock` 和某个进程的 `pp->lock`；避免死锁的顺序是先 `wait_lock` 后 `pp->lock`。
+`kwait` 是 `wait` 的内核实现，它首先获取 [`wait_lock`](../kernel/proc.c#L370)，这个锁充当条件锁，帮助确保 `kwait` 不会错过正在退出的子进程发出的 `wakeup`。然后 `kwait` 扫描进程表。如果找到处于 `ZOMBIE` 状态的子进程，它就释放该子进程的资源及其 `proc` 结构体，把子进程的退出状态复制到传给 `wait` 的地址（如果该地址不为 0），并返回子进程的进程 ID。如果 `kwait` 找到了子进程但都还没有退出，它就睡眠，等待其中任意一个退出[（proc.c:414）](../kernel/proc.c#L414)，然后再次扫描。`kwait` 经常同时持有两个锁：`wait_lock` 和某个进程的 `pp->lock`；避免死锁的顺序是先 `wait_lock` 后 `pp->lock`。
 
-[`kexit`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/proc.c#L326) 记录退出状态，释放部分资源，调用 `reparent` 把所有子进程交给 `init` 进程，唤醒可能正在 `wait` 中的父进程，把调用者标记为僵尸，并永久让出 CPU。`kexit` 在这一系列操作期间同时持有 `wait_lock` 和 `p->lock`。它持有 `wait_lock`，是因为这是 `wakeup(p->parent)` 的条件锁，可以防止在 `wait` 中的父进程丢失唤醒。`kexit` 在这一系列操作中也必须持有 `p->lock`，以防在 `wait` 中的父进程在子进程最终调用 `swtch` 之前就看到子进程处于 `ZOMBIE` 状态。`kexit` 以与 `kwait` 相同的顺序获取这两个锁，以避免死锁。
+[`kexit`](../kernel/proc.c#L326) 记录退出状态，释放部分资源，调用 `reparent` 把所有子进程交给 `init` 进程，唤醒可能正在 `wait` 中的父进程，把调用者标记为僵尸，并永久让出 CPU。`kexit` 在这一系列操作期间同时持有 `wait_lock` 和 `p->lock`。它持有 `wait_lock`，是因为这是 `wakeup(p->parent)` 的条件锁，可以防止在 `wait` 中的父进程丢失唤醒。`kexit` 在这一系列操作中也必须持有 `p->lock`，以防在 `wait` 中的父进程在子进程最终调用 `swtch` 之前就看到子进程处于 `ZOMBIE` 状态。`kexit` 以与 `kwait` 相同的顺序获取这两个锁，以避免死锁。
 
-`kexit` 在把自己的状态设为 `ZOMBIE` 之前就唤醒父进程，这看起来可能不对，但其实是安全的：虽然 `wakeup` 可能让父进程开始运行，但父进程 `kwait` 中的循环在子进程的 `p->lock` 被 `scheduler` 释放之前无法检查该子进程，所以 `kwait` 要等到 `kexit` 把状态设为 [`ZOMBIE`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/proc.c#L358) 之后才能查看这个正在退出的进程。
+`kexit` 在把自己的状态设为 `ZOMBIE` 之前就唤醒父进程，这看起来可能不对，但其实是安全的：虽然 `wakeup` 可能让父进程开始运行，但父进程 `kwait` 中的循环在子进程的 `p->lock` 被 `scheduler` 释放之前无法检查该子进程，所以 `kwait` 要等到 `kexit` 把状态设为 [`ZOMBIE`](../kernel/proc.c#L358) 之后才能查看这个正在退出的进程。
 
-`exit` 让进程终止自己，而 `kill` 系统调用[（proc.c:601）](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/proc.c#L601)则让一个进程请求另一个进程终止。让 `kill` 直接销毁目标进程会过于复杂，因为目标进程可能正在另一个 CPU 上执行，也许正处在对内核数据结构进行一系列敏感更新的过程中。所以 `kkill` 做的事情很少：它只是设置目标进程的 `p->killed`，如果目标进程在睡眠，就唤醒它。目标进程最终会进入或离开内核，那时如果 `p->killed` 已被设置，`usertrap` 中的代码就会调用 `kexit`（它通过调用 [`killed`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/proc.c#L633) 来检查）。如果目标进程正在用户空间运行，它会在下一次进入内核时（通过发起系统调用，或者因为定时器或其他设备中断）发现自己已被杀死。
+`exit` 让进程终止自己，而 `kill` 系统调用[（proc.c:601）](../kernel/proc.c#L601)则让一个进程请求另一个进程终止。让 `kill` 直接销毁目标进程会过于复杂，因为目标进程可能正在另一个 CPU 上执行，也许正处在对内核数据结构进行一系列敏感更新的过程中。所以 `kkill` 做的事情很少：它只是设置目标进程的 `p->killed`，如果目标进程在睡眠，就唤醒它。目标进程最终会进入或离开内核，那时如果 `p->killed` 已被设置，`usertrap` 中的代码就会调用 `kexit`（它通过调用 [`killed`](../kernel/proc.c#L633) 来检查）。如果目标进程正在用户空间运行，它会在下一次进入内核时（通过发起系统调用，或者因为定时器或其他设备中断）发现自己已被杀死。
 
-如果目标进程正在睡眠，`kkill` 会把它的状态设为 `RUNNABLE`，让它从 `sleep` 返回。这有潜在的危险，因为它所等待的条件可能并不成立。不过，xv6 对 `sleep` 的调用总是包在一个 `while` 循环中，`sleep` 返回后会重新检测条件。有些 `sleep` 调用还会在循环中检测 `p->killed`，如果它已被设置，就放弃当前的操作。只有在放弃操作是正确的情况下才会这样做。例如，管道读写代码[（pipe.c:84）](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/pipe.c#L84)在 killed 标志被设置时会返回；代码最终会返回到 trap，trap 会再次检查 `p->killed` 并退出。
+如果目标进程正在睡眠，`kkill` 会把它的状态设为 `RUNNABLE`，让它从 `sleep` 返回。这有潜在的危险，因为它所等待的条件可能并不成立。不过，xv6 对 `sleep` 的调用总是包在一个 `while` 循环中，`sleep` 返回后会重新检测条件。有些 `sleep` 调用还会在循环中检测 `p->killed`，如果它已被设置，就放弃当前的操作。只有在放弃操作是正确的情况下才会这样做。例如，管道读写代码[（pipe.c:84）](../kernel/pipe.c#L84)在 killed 标志被设置时会返回；代码最终会返回到 trap，trap 会再次检查 `p->killed` 并退出。
 
-有些 xv6 的 `sleep` 循环不检查 `p->killed`，因为这些代码处在一个应当原子执行的多步系统调用中间（也就是说，中途放弃就会出错）。virtio 驱动[（virtio\_disk.c:287）](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/virtio_disk.c#L287)就是一个例子：它不检查 `p->killed`，因为一次磁盘操作可能是一组写操作中的一个，而这组写操作必须全部完成，文件系统才能处于正确的状态。在等待磁盘 I/O 时被杀死的进程，要等到它完成当前系统调用、`usertrap` 看到 killed 标志后才会退出。
+有些 xv6 的 `sleep` 循环不检查 `p->killed`，因为这些代码处在一个应当原子执行的多步系统调用中间（也就是说，中途放弃就会出错）。virtio 驱动[（virtio\_disk.c:287）](../kernel/virtio_disk.c#L287)就是一个例子：它不检查 `p->killed`，因为一次磁盘操作可能是一组写操作中的一个，而这组写操作必须全部完成，文件系统才能处于正确的状态。在等待磁盘 I/O 时被杀死的进程，要等到它完成当前系统调用、`usertrap` 看到 killed 标志后才会退出。
 
 ## 9.5 进程锁
 

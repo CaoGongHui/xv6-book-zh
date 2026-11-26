@@ -114,11 +114,11 @@ xv6 使用页表（由硬件实现）为每个进程提供独立的地址空间�
 
 *图 2.3：进程虚拟地址空间的布局。*
 
-xv6 为每个进程维护一个单独的页表，定义该进程的地址空间。如图 2.3 所示，地址空间包含从虚拟地址零开始的进程**用户内存**（user memory）。最前面是指令，接着是全局变量，然后是栈，最后是进程可以按需扩展的“堆”区域（供 malloc 使用）。有几个因素限制了进程地址空间的最大尺寸：RISC-V 上的指针是 64 位宽；硬件在页表中查找虚拟地址时只使用低 39 位；而 xv6 只使用这 39 位中的 38 位。因此最大地址是 2^38 - 1 = 0x3fffffffff，即 [`MAXVA`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/riscv.h#L417)。在地址空间顶部，xv6 放置了一个 **trampoline**（跳板）页（4096 字节）和一个 **trapframe**（陷阱帧）页。xv6 用这两个页进入内核并返回；trampoline 页包含进出内核的代码，trapframe 则是内核保存进程用户寄存器的地方，第 4 章会对此进行说明。
+xv6 为每个进程维护一个单独的页表，定义该进程的地址空间。如图 2.3 所示，地址空间包含从虚拟地址零开始的进程**用户内存**（user memory）。最前面是指令，接着是全局变量，然后是栈，最后是进程可以按需扩展的“堆”区域（供 malloc 使用）。有几个因素限制了进程地址空间的最大尺寸：RISC-V 上的指针是 64 位宽；硬件在页表中查找虚拟地址时只使用低 39 位；而 xv6 只使用这 39 位中的 38 位。因此最大地址是 2^38 - 1 = 0x3fffffffff，即 [`MAXVA`](../kernel/riscv.h#L417)。在地址空间顶部，xv6 放置了一个 **trampoline**（跳板）页（4096 字节）和一个 **trapframe**（陷阱帧）页。xv6 用这两个页进入内核并返回；trampoline 页包含进出内核的代码，trapframe 则是内核保存进程用户寄存器的地方，第 4 章会对此进行说明。
 
-xv6 内核为每个进程维护许多状态，并把它们汇集到一个 [`struct proc`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/proc.h#L82) 中。进程最重要的内核状态是它的页表、内核栈和运行状态。我们用 `p->xxx` 表示 `proc` 结构的成员；例如，`p->pagetable` 是指向进程页表的指针。
+xv6 内核为每个进程维护许多状态，并把它们汇集到一个 [`struct proc`](../kernel/proc.h#L82) 中。进程最重要的内核状态是它的页表、内核栈和运行状态。我们用 `p->xxx` 表示 `proc` 结构的成员；例如，`p->pagetable` 是指向进程页表的指针。
 
-现在请阅读定义了 `struct proc` 的 [`kernel/proc.h`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/proc.h)。对你来说，理解 xv6 代码比理解本书更重要；你应该优先看代码，需要时再查阅本书来理解代码。有些代码的用途一开始可能不明显，但进一步阅读和搜索代码会有帮助。欢迎随意探索和修改代码。
+现在请阅读定义了 `struct proc` 的 [`kernel/proc.h`](../kernel/proc.h)。对你来说，理解 xv6 代码比理解本书更重要；你应该优先看代码，需要时再查阅本书来理解代码。有些代码的用途一开始可能不明显，但进一步阅读和搜索代码会有帮助。欢迎随意探索和修改代码。
 
 每个进程有一个控制线程（简称**线程**，thread），保存执行该进程所需的状态。在任一时刻，线程可能正在某个 CPU 上执行，也可能处于挂起状态（没有执行，但将来可以恢复执行）。为了让 CPU 在进程之间切换，内核挂起当前在该 CPU 上运行的线程并保存其状态，然后恢复另一个进程先前被挂起的线程的状态。线程的大部分状态（局部变量、函数调用的返回地址）存放在线程的栈上。每个进程有两个栈：用户栈和内核栈（`p->kstack`）。进程执行用户指令时，只使用用户栈，内核栈是空的。进程进入内核时（由于系统调用或中断），内核代码在进程的内核栈上执行；进程在内核中时，它的用户栈仍保存着数据，但不会被主动使用。进程的线程在主动使用用户栈和内核栈之间交替。内核栈是独立的（并且不受用户代码影响），这样即使进程破坏了自己的用户栈，内核也能执行。
 
@@ -132,17 +132,17 @@ xv6 内核为每个进程维护许多状态，并把它们汇集到一个 [`stru
 
 ## 2.6 代码：启动 xv6、第一个进程和系统调用
 
-为了让 xv6 更具体，我们概述内核如何启动并运行第一个进程。后续章节会更详细地介绍这一概述中出现的机制。请阅读 [`kernel/entry.S`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/entry.S)、[`kernel/start.c`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/start.c)、[`kernel/main.c`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/main.c) 和 [`user/init.c`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/user/init.c)。
+为了让 xv6 更具体，我们概述内核如何启动并运行第一个进程。后续章节会更详细地介绍这一概述中出现的机制。请阅读 [`kernel/entry.S`](../kernel/entry.S)、[`kernel/start.c`](../kernel/start.c)、[`kernel/main.c`](../kernel/main.c) 和 [`user/init.c`](../user/init.c)。
 
 RISC-V 计算机上电后，会先初始化自身，然后运行存放在只读存储器中的引导加载程序（boot loader）。引导加载程序把 xv6 内核复制到内存中物理地址 `0x80000000` 处。之所以把内核放在 `0x80000000` 而不是 `0x0`，是因为地址范围 `0x0:0x80000000` 中包含 I/O 设备。
 
-然后引导加载程序跳转到 xv6 的 [`_entry`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/entry.S#L7) 开始执行。RISC-V 启动时分页硬件是关闭的：虚拟地址直接映射到物理地址。`_entry` 处的指令设置一个栈，让 xv6 可以运行 C 代码。xv6 在文件 [`start.c`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/start.c#L11) 中为这个栈声明了空间 `stack0`。`_entry` 处的代码把地址 `stack0+4096`（栈顶）加载到栈指针寄存器 `sp` 中，因为 RISC-V 上的栈是向下增长的。内核有了栈之后，`_entry` 就调用 C 代码 [`start`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/start.c#L15)。
+然后引导加载程序跳转到 xv6 的 [`_entry`](../kernel/entry.S#L7) 开始执行。RISC-V 启动时分页硬件是关闭的：虚拟地址直接映射到物理地址。`_entry` 处的指令设置一个栈，让 xv6 可以运行 C 代码。xv6 在文件 [`start.c`](../kernel/start.c#L11) 中为这个栈声明了空间 `stack0`。`_entry` 处的代码把地址 `stack0+4096`（栈顶）加载到栈指针寄存器 `sp` 中，因为 RISC-V 上的栈是向下增长的。内核有了栈之后，`_entry` 就调用 C 代码 [`start`](../kernel/start.c#L15)。
 
-函数 `start` 执行一些 CPU 只允许在机器模式下进行的设置，其中最关键的是对时钟芯片编程，使其产生定时器中断。然后 `start` 用 RISC-V 的 `mret` 指令切换到监管者模式并跳转到 [`main`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/main.c#L11)。`mret` 需要一些准备工作：`start` 在寄存器 `mstatus` 中把先前的特权模式设为监管者模式；把 `main` 的地址写入寄存器 `mepc`，从而把目标地址设为 `main`；向页表寄存器 `satp` 写入 `0`，从而在监管者模式下关闭虚拟地址转换；并把所有中断和异常委托给监管者模式。
+函数 `start` 执行一些 CPU 只允许在机器模式下进行的设置，其中最关键的是对时钟芯片编程，使其产生定时器中断。然后 `start` 用 RISC-V 的 `mret` 指令切换到监管者模式并跳转到 [`main`](../kernel/main.c#L11)。`mret` 需要一些准备工作：`start` 在寄存器 `mstatus` 中把先前的特权模式设为监管者模式；把 `main` 的地址写入寄存器 `mepc`，从而把目标地址设为 `main`；向页表寄存器 `satp` 写入 `0`，从而在监管者模式下关闭虚拟地址转换；并把所有中断和异常委托给监管者模式。
 
-[`main`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/main.c#L11) 初始化若干设备和子系统之后，调用 [`userinit`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/proc.c#L219) 创建第一个进程。所有新创建的进程都从内核中的 [`forkret`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/proc.c#L513) 开始执行。作为针对第一个进程的特殊处理，`forkret` 调用 `kexec` 加载用户程序 `/init`。
+[`main`](../kernel/main.c#L11) 初始化若干设备和子系统之后，调用 [`userinit`](../kernel/proc.c#L219) 创建第一个进程。所有新创建的进程都从内核中的 [`forkret`](../kernel/proc.c#L513) 开始执行。作为针对第一个进程的特殊处理，`forkret` 调用 `kexec` 加载用户程序 `/init`。
 
-调用 `kexec` 之后，`forkret` 返回到 `/init` 进程的用户空间。[`init`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/user/init.c#L15) 在需要时创建一个新的控制台设备文件，然后把它打开为文件描述符 0、1 和 2。接着它在控制台上启动一个 shell。系统就此启动完成。
+调用 `kexec` 之后，`forkret` 返回到 `/init` 进程的用户空间。[`init`](../user/init.c#L15) 在需要时创建一个新的控制台设备文件，然后把它打开为文件描述符 0、1 和 2。接着它在控制台上启动一个 shell。系统就此启动完成。
 
 ## 2.7 安全模型
 

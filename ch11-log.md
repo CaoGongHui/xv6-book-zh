@@ -20,7 +20,7 @@ xv6 用一种简单的**日志**（logging）机制来解决文件系统操作�
 
 把多个事务放在一起提交的思想称为**组提交**（group commit）。组提交把一次提交的固定开销分摊到多个操作上，从而减少了磁盘操作的次数。组提交还能同时交给磁盘系统更多的并发写入，也许能让磁盘在一圈旋转内把它们全部写完。xv6 的 virtio 驱动不支持这种**批处理**（batching），但 xv6 的文件系统设计允许这样做。
 
-组提交有一个微妙的影响：它使 write 系统调用的效果变成异步的。也就是说，即使 write 系统调用已经返回给应用程序，也不能保证它修改过的块已经落到磁盘上。例如，当一个 write 事务结束时，另一个事务可能已经开始，这个 write 事务会和第二个事务作为一组一起提交，于是 write 在磁盘上的效果要推迟到第二个事务提交时才生效。如果应用程序想等到它的修改变得**持久**（durable，即已经写到磁盘上），可以在 write 系统调用之后调用 [`sync`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/log.c#L247) 系统调用；`sync` 会一直等到正在进行的组提交完成提交。
+组提交有一个微妙的影响：它使 write 系统调用的效果变成异步的。也就是说，即使 write 系统调用已经返回给应用程序，也不能保证它修改过的块已经落到磁盘上。例如，当一个 write 事务结束时，另一个事务可能已经开始，这个 write 事务会和第二个事务作为一组一起提交，于是 write 在磁盘上的效果要推迟到第二个事务提交时才生效。如果应用程序想等到它的修改变得**持久**（durable，即已经写到磁盘上），可以在 write 系统调用之后调用 [`sync`](../kernel/log.c#L247) 系统调用；`sync` 会一直等到正在进行的组提交完成提交。
 
 xv6 在磁盘上划出固定大小的空间来存放日志。一个事务中各系统调用写入的块总数必须放得进这块空间。这带来两个后果。第一，不能允许任何单个系统调用写入的不同块数超过日志空间的大小。对大多数系统调用来说这不成问题，但有两个系统调用可能会写很多块：`write` 和 `unlink`。写一个大文件可能要写很多数据块、很多位图块以及一个 inode 块；删除一个大文件可能要写很多位图块和一个 inode。xv6 的 write 系统调用把大的写入拆分成多个能放进日志的小写入；而 `unlink` 不会造成问题，因为实际上 xv6 文件系统只使用一个位图块。日志空间有限的另一个后果是：日志系统只有在确定某个系统调用的写入能放进日志剩余空间时，才允许该系统调用开始。
 
@@ -38,17 +38,17 @@ xv6 在磁盘上划出固定大小的空间来存放日志。一个事务中各�
   end_op();
 ```
 
-[`begin_op`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/log.c#L129) 会一直等待，直到日志系统当前没有在提交，并且有足够的未预留日志空间来容纳本次调用的写入。`log.outstanding` 记录已经预留了日志空间的系统调用数量；预留的总空间是 `log.outstanding` 乘以 `MAXOPBLOCKS`。递增 `log.outstanding` 既预留了空间，又能阻止在这个系统调用执行期间发生提交。这段代码保守地假设每个系统调用最多可能写入 `MAXOPBLOCKS` 个不同的块。
+[`begin_op`](../kernel/log.c#L129) 会一直等待，直到日志系统当前没有在提交，并且有足够的未预留日志空间来容纳本次调用的写入。`log.outstanding` 记录已经预留了日志空间的系统调用数量；预留的总空间是 `log.outstanding` 乘以 `MAXOPBLOCKS`。递增 `log.outstanding` 既预留了空间，又能阻止在这个系统调用执行期间发生提交。这段代码保守地假设每个系统调用最多可能写入 `MAXOPBLOCKS` 个不同的块。
 
-[`log_write`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/log.c#L224) 充当 `bwrite` 的代理。它在内存中记下该块的块号，为它在磁盘日志中预留一个槽位，并把缓冲区固定（pin）在块缓存中，防止块缓存把它换出。在提交之前，这个块必须一直留在缓存中：在此之前，缓存中的副本是这次修改的唯一记录；提交之前不能把它写到磁盘上的原位置；而且同一事务中的其他读操作必须能看到这些修改。`log_write` 会注意到一个块在单个事务中被多次写入的情况，并为该块分配日志中的同一个槽位。这种优化通常称为**吸收**（absorption）。例如，包含多个文件 inode 的磁盘块在一个事务中被写多次是很常见的。通过把多次磁盘写入吸收为一次，文件系统可以节省日志空间，并获得更好的性能，因为只需把该磁盘块的一份副本写到磁盘上。
+[`log_write`](../kernel/log.c#L224) 充当 `bwrite` 的代理。它在内存中记下该块的块号，为它在磁盘日志中预留一个槽位，并把缓冲区固定（pin）在块缓存中，防止块缓存把它换出。在提交之前，这个块必须一直留在缓存中：在此之前，缓存中的副本是这次修改的唯一记录；提交之前不能把它写到磁盘上的原位置；而且同一事务中的其他读操作必须能看到这些修改。`log_write` 会注意到一个块在单个事务中被多次写入的情况，并为该块分配日志中的同一个槽位。这种优化通常称为**吸收**（absorption）。例如，包含多个文件 inode 的磁盘块在一个事务中被写多次是很常见的。通过把多次磁盘写入吸收为一次，文件系统可以节省日志空间，并获得更好的性能，因为只需把该磁盘块的一份副本写到磁盘上。
 
-[`end_op`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/log.c#L155) 首先递减正在进行的系统调用计数。如果计数变为零，它就调用 `commit()` 提交当前事务。这个过程分四个阶段。[`write_log()`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/log.c#L188) 把事务中修改过的每个块从缓冲区缓存复制到磁盘日志中对应的槽位。[`write_head()`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/log.c#L105) 把头块写到磁盘：这就是提交点，在这次写入之后发生崩溃，恢复过程就会从日志中重放该事务的写入。[`install_trans`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/log.c#L68) 从日志中读出每个块，并把它写到文件系统中的正确位置。最后，`end_op` 写入计数为零的日志头；这一步必须在下一个事务开始写日志块之前完成，以免崩溃后恢复过程把一个事务的头和后一个事务的日志块混在一起使用。
+[`end_op`](../kernel/log.c#L155) 首先递减正在进行的系统调用计数。如果计数变为零，它就调用 `commit()` 提交当前事务。这个过程分四个阶段。[`write_log()`](../kernel/log.c#L188) 把事务中修改过的每个块从缓冲区缓存复制到磁盘日志中对应的槽位。[`write_head()`](../kernel/log.c#L105) 把头块写到磁盘：这就是提交点，在这次写入之后发生崩溃，恢复过程就会从日志中重放该事务的写入。[`install_trans`](../kernel/log.c#L68) 从日志中读出每个块，并把它写到文件系统中的正确位置。最后，`end_op` 写入计数为零的日志头；这一步必须在下一个事务开始写日志块之前完成，以免崩溃后恢复过程把一个事务的头和后一个事务的日志块混在一起使用。
 
 `end_op` 实现中的一个关键假设是：`write_head` 对头块的更新是原子的，要么全部完成，要么完全没做。回忆第 10 章，xv6 中的一个块是两个磁盘扇区，但日志头能放进第一个扇区，所以即使磁盘只保证单个扇区的更新是原子的，也不会有问题。
 
-[`recover_from_log`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/log.c#L119) 由 [`initlog`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/log.c#L55) 调用，而 `initlog` 在启动期间、第一个用户进程运行之前由 [`fsinit`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/fs.c#L42) 调用[（proc.c:528）](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/proc.c#L528)。它读取日志头，如果日志头表明日志中包含一个已提交的事务，就模仿 `end_op` 的动作。
+[`recover_from_log`](../kernel/log.c#L119) 由 [`initlog`](../kernel/log.c#L55) 调用，而 `initlog` 在启动期间、第一个用户进程运行之前由 [`fsinit`](../kernel/fs.c#L42) 调用[（proc.c:528）](../kernel/proc.c#L528)。它读取日志头，如果日志头表明日志中包含一个已提交的事务，就模仿 `end_op` 的动作。
 
-[`filewrite`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/file.c#L135) 中有一个使用日志的例子。其中的事务如下：
+[`filewrite`](../kernel/file.c#L135) 中有一个使用日志的例子。其中的事务如下：
 
 ```c
       begin_op();

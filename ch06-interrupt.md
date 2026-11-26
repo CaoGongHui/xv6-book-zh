@@ -4,25 +4,25 @@
 
 **驱动**（driver）是操作系统中管理某个特定设备的代码：它配置设备硬件，让设备执行操作，处理随之产生的中断，并与使用该设备的进程交互。驱动代码可能很棘手，因为驱动与设备并发执行，而且常常还与使用设备的进程并发执行。此外，驱动必须理解设备的硬件接口，而这些接口可能很复杂，文档也写得很差。
 
-需要操作系统关注的设备通常可以配置为产生中断，中断是陷阱的一种。内核的陷阱处理代码能识别出设备发出了中断，并调用驱动的中断处理程序；在 xv6 中，这个分派工作在 [`devintr`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/trap.c#L188) 中完成。
+需要操作系统关注的设备通常可以配置为产生中断，中断是陷阱的一种。内核的陷阱处理代码能识别出设备发出了中断，并调用驱动的中断处理程序；在 xv6 中，这个分派工作在 [`devintr`](../kernel/trap.c#L188) 中完成。
 
 很多设备驱动在两种上下文中执行代码：在进程内核线程中运行的**下半部**（bottom half），以及在中断时执行的**上半部**（top half）。下半部通过 `read`、`write` 这类希望设备执行 I/O 的系统调用被调用。这部分代码可能会要求硬件启动一个操作（例如让磁盘读取一个块），然后等待操作完成。设备最终完成操作并发出中断。驱动的中断处理程序充当上半部，弄清楚哪个操作完成了，在合适时唤醒等待的进程，并让硬件开始处理下一个操作（如果有的话）。
 
 ## 6.1 代码：控制台输入
 
-控制台驱动[（console.c）](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/console.c)是展示驱动结构的一个简单例子。控制台驱动通过连接在 RISC-V 上的 **UART** 串口硬件，接收人敲入的字符。控制台驱动每次积累一行输入，并处理退格、control-u 等特殊输入字符。shell 等用户进程使用 `read` 系统调用从控制台读取输入行。在 QEMU 中向 xv6 输入时，你的按键是通过 QEMU 模拟的 UART 硬件传给 xv6 的。
+控制台驱动[（console.c）](../kernel/console.c)是展示驱动结构的一个简单例子。控制台驱动通过连接在 RISC-V 上的 **UART** 串口硬件，接收人敲入的字符。控制台驱动每次积累一行输入，并处理退格、control-u 等特殊输入字符。shell 等用户进程使用 `read` 系统调用从控制台读取输入行。在 QEMU 中向 xv6 输入时，你的按键是通过 QEMU 模拟的 UART 硬件传给 xv6 的。
 
 驱动与之打交道的 UART 硬件是 QEMU 模拟的 16550 芯片（Michael and Durich 1987）。在真实的计算机上，16550 管理一条连接终端或其他计算机的 RS232 串行链路。在 QEMU 中运行时，它连接的是你的键盘和显示器。
 
-在软件看来，UART 硬件是一组**内存映射**（memory-mapped）的控制寄存器。也就是说，有一些物理地址连接到 UART 设备，对这些地址的 load 和 store 操作与设备硬件交互，而不是与 RAM 交互。UART 的内存映射地址从 0x10000000 开始，即 [`UART0`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/memlayout.h#L21)。UART 控制寄存器有好几个，每个一字节宽。它们相对 `UART0` 的偏移定义在[（uart.c:25）](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/uart.c#L25)中。例如，`LSR` 寄存器中有一些位，指示是否有输入字符等待驱动读取。这些字符（如果有）可以从 `RHR` 寄存器读出。每读出一个字符，UART 硬件就把它从内部的等待字符 FIFO 中删除，FIFO 为空时则清除 `LSR` 中的“就绪”位。发送时，驱动向 `THR` 寄存器写入一个字节，UART 会把这个字节追加到待发送的字节 FIFO 中，然后通过 RS232 串行链路发出去。UART 的发送硬件和接收硬件基本上相互独立。
+在软件看来，UART 硬件是一组**内存映射**（memory-mapped）的控制寄存器。也就是说，有一些物理地址连接到 UART 设备，对这些地址的 load 和 store 操作与设备硬件交互，而不是与 RAM 交互。UART 的内存映射地址从 0x10000000 开始，即 [`UART0`](../kernel/memlayout.h#L21)。UART 控制寄存器有好几个，每个一字节宽。它们相对 `UART0` 的偏移定义在[（uart.c:25）](../kernel/uart.c#L25)中。例如，`LSR` 寄存器中有一些位，指示是否有输入字符等待驱动读取。这些字符（如果有）可以从 `RHR` 寄存器读出。每读出一个字符，UART 硬件就把它从内部的等待字符 FIFO 中删除，FIFO 为空时则清除 `LSR` 中的“就绪”位。发送时，驱动向 `THR` 寄存器写入一个字节，UART 会把这个字节追加到待发送的字节 FIFO 中，然后通过 RS232 串行链路发出去。UART 的发送硬件和接收硬件基本上相互独立。
 
-xv6 的 `main` 调用 [`consoleinit`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/console.c#L193) 初始化 UART 硬件。这段代码把 UART 配置为：每收到一个输入字节就产生一个接收中断，每发送完一个输出字节就产生一个**发送完成**（transmit complete）中断[（uart.c:50）](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/uart.c#L50)。
+xv6 的 `main` 调用 [`consoleinit`](../kernel/console.c#L193) 初始化 UART 硬件。这段代码把 UART 配置为：每收到一个输入字节就产生一个接收中断，每发送完一个输出字节就产生一个**发送完成**（transmit complete）中断[（uart.c:50）](../kernel/uart.c#L50)。
 
-xv6 shell 通过 [`init.c`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/user/init.c#L19) 打开的文件描述符从控制台读取。`read` 系统调用经由内核到达 [`consoleread`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/console.c#L88)。`consoleread` 等待输入（通过中断）到达并缓存在 `cons.buf` 中，把输入复制到用户空间，然后（在一整行都到达之后）返回用户进程。如果用户还没有输入完整的一行，所有读取进程都会在 `sleep` 调用中等待[（console.c:106）](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/console.c#L106)（第 9 章会解释 `sleep` 的细节）。
+xv6 shell 通过 [`init.c`](../user/init.c#L19) 打开的文件描述符从控制台读取。`read` 系统调用经由内核到达 [`consoleread`](../kernel/console.c#L88)。`consoleread` 等待输入（通过中断）到达并缓存在 `cons.buf` 中，把输入复制到用户空间，然后（在一整行都到达之后）返回用户进程。如果用户还没有输入完整的一行，所有读取进程都会在 `sleep` 调用中等待[（console.c:106）](../kernel/console.c#L106)（第 9 章会解释 `sleep` 的细节）。
 
-用户敲入一个字符时，UART 硬件请求 RISC-V 发出一个中断，从而激活 xv6 的陷阱处理程序。陷阱处理程序调用 [`devintr`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/trap.c#L188)，它查看 RISC-V 的 `scause` 寄存器，发现中断来自外部设备。然后它请求一个叫 PLIC（Waterman et al. 2024）的硬件单元告诉它是哪个设备发出的中断[（trap.c:196）](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/trap.c#L196)。如果是 UART，`devintr` 就调用 `uartintr`。
+用户敲入一个字符时，UART 硬件请求 RISC-V 发出一个中断，从而激活 xv6 的陷阱处理程序。陷阱处理程序调用 [`devintr`](../kernel/trap.c#L188)，它查看 RISC-V 的 `scause` 寄存器，发现中断来自外部设备。然后它请求一个叫 PLIC（Waterman et al. 2024）的硬件单元告诉它是哪个设备发出的中断[（trap.c:196）](../kernel/trap.c#L196)。如果是 UART，`devintr` 就调用 `uartintr`。
 
-[`uartintr`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/uart.c#L143) 从 UART 硬件读出所有等待中的输入字符，交给 [`consoleintr`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/console.c#L147)；它不会等待字符，因为之后的输入会引发新的中断。`consoleintr` 的工作是把输入字符积累在 `cons.buf` 中，直到一整行到达。`consoleintr` 对退格和其他几个字符做特殊处理。换行符到达时，`consoleintr` 唤醒正在等待的 `consoleread`（如果有的话）。
+[`uartintr`](../kernel/uart.c#L143) 从 UART 硬件读出所有等待中的输入字符，交给 [`consoleintr`](../kernel/console.c#L147)；它不会等待字符，因为之后的输入会引发新的中断。`consoleintr` 的工作是把输入字符积累在 `cons.buf` 中，直到一整行到达。`consoleintr` 对退格和其他几个字符做特殊处理。换行符到达时，`consoleintr` 唤醒正在等待的 `consoleread`（如果有的话）。
 
 被唤醒后，`consoleread` 会在 `cons.buf` 中看到完整的一行，把它复制到用户空间，然后（通过系统调用机制）返回用户空间。
 
@@ -30,7 +30,7 @@ xv6 shell 通过 [`init.c`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/use
 
 ## 6.2 代码：控制台输出
 
-对连接到控制台的文件描述符执行 `write` 系统调用，会到达 [`consolewrite`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/console.c#L63)，它分批从用户空间复制字节，并把每一批交给 [`uartwrite`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/uart.c#L81)。在把每个字节写入 UART 的 THR 寄存器之前，`uartwrite` 必须等待 UART 准备好接受更多输出。因为 UART 相对较慢，`uartwrite` 用 `sleep`（它会让出 CPU）来等待，而不是忙循环。UART 发送完最近一个字节后会发出中断。中断例程 [`uartintr`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/uart.c#L143) 与 `uartwrite` 相互配合：发送每个字节之前，`uartwrite` 读取 UART 的 LSR 寄存器，看 UART 能否再接受一个字节，不能就调用 `sleep`；当 UART 发出信号表示可以接受更多输出时，中断例程调用 `wakeup`，于是 `uartwrite` 被唤醒，重新检查 LSR 寄存器，然后发送下一个字节。
+对连接到控制台的文件描述符执行 `write` 系统调用，会到达 [`consolewrite`](../kernel/console.c#L63)，它分批从用户空间复制字节，并把每一批交给 [`uartwrite`](../kernel/uart.c#L81)。在把每个字节写入 UART 的 THR 寄存器之前，`uartwrite` 必须等待 UART 准备好接受更多输出。因为 UART 相对较慢，`uartwrite` 用 `sleep`（它会让出 CPU）来等待，而不是忙循环。UART 发送完最近一个字节后会发出中断。中断例程 [`uartintr`](../kernel/uart.c#L143) 与 `uartwrite` 相互配合：发送每个字节之前，`uartwrite` 读取 UART 的 LSR 寄存器，看 UART 能否再接受一个字节，不能就调用 `sleep`；当 UART 发出信号表示可以接受更多输出时，中断例程调用 `wakeup`，于是 `uartwrite` 被唤醒，重新检查 LSR 寄存器，然后发送下一个字节。
 
 ## 6.3 驱动中的并发
 
@@ -42,9 +42,9 @@ xv6 shell 通过 [`init.c`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/use
 
 xv6 用时钟中断来维护它对当前时间的认识，并在计算密集型进程之间切换。时钟中断来自连接在每个 RISC-V CPU 上的时钟硬件。xv6 对每个 CPU 的时钟硬件编程，让它周期性地中断 CPU。
 
-[`start.c`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/start.c#L56) 中的代码设置一些控制位，允许 supervisor 模式访问时钟控制寄存器，然后请求第一个时钟中断。`time` 控制寄存器包含一个由硬件以恒定速率递增的计数，用作当前时间。`stimecmp` 寄存器包含 CPU 将要发出时钟中断的时间；把 `stimecmp` 设为 `time` 的当前值加上 *x*，就安排了在 *x* 个时间单位之后发生一次中断。在 `qemu` 的 RISC-V 模拟中，1000000 个时间单位大约是十分之一秒。
+[`start.c`](../kernel/start.c#L56) 中的代码设置一些控制位，允许 supervisor 模式访问时钟控制寄存器，然后请求第一个时钟中断。`time` 控制寄存器包含一个由硬件以恒定速率递增的计数，用作当前时间。`stimecmp` 寄存器包含 CPU 将要发出时钟中断的时间；把 `stimecmp` 设为 `time` 的当前值加上 *x*，就安排了在 *x* 个时间单位之后发生一次中断。在 `qemu` 的 RISC-V 模拟中，1000000 个时间单位大约是十分之一秒。
 
-与其他设备中断一样，时钟中断经由 `usertrap` 或 `kerneltrap` 以及 `devintr` 到达。时钟中断到达时，`scause` 的低位被设为 5；`trap.c` 中的 `devintr` 检测到这种情况，就调用 [`clockintr`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/trap.c#L167)。后者递增 `ticks`，让内核能够跟踪时间的流逝。递增只在一个 CPU 上进行，以免有多个 CPU 时时间走得更快。`clockintr` 唤醒所有在 `pause` 系统调用中等待的进程，并通过写 `stimecmp` 安排下一次时钟中断。
+与其他设备中断一样，时钟中断经由 `usertrap` 或 `kerneltrap` 以及 `devintr` 到达。时钟中断到达时，`scause` 的低位被设为 5；`trap.c` 中的 `devintr` 检测到这种情况，就调用 [`clockintr`](../kernel/trap.c#L167)。后者递增 `ticks`，让内核能够跟踪时间的流逝。递增只在一个 CPU 上进行，以免有多个 CPU 时时间走得更快。`clockintr` 唤醒所有在 `pause` 系统调用中等待的进程，并通过写 `stimecmp` 安排下一次时钟中断。
 
 对于时钟中断，`devintr` 返回 2，告诉 `kerneltrap` 或 `usertrap` 应当调用 `yield`，以便在可运行的进程之间多路复用 CPU。
 

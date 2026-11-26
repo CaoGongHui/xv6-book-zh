@@ -6,7 +6,7 @@
 
 页表和缺页异常结合起来是一种强大的工具。页表让内核在虚拟地址和物理地址之间多了一层间接，使内核可以控制地址空间的结构和内容。缺页异常让内核可以拦截加载和存储操作，并通过修改页表，动态决定这些访问实际指向什么数据。内核可以利用这些能力提高效率：例如，**写时复制 fork**（copy-on-write fork）让内核在父子进程之间透明地共享内存，避免复制双方都不写的页。应用程序员也能从中受益。一种用法是**内存映射文件**（memory-mapped file），内核利用分页让文件内容出现在应用程序的地址空间中，在发生缺页时透明地读取文件块。另一种用法是**惰性内存分配**（lazy memory allocation），它允许程序申请巨大的虚拟地址空间，但只为程序实际读写的页付出分配物理内存的代价。xv6 只把缺页异常用于一个目的：惰性分配。
 
-继续阅读之前，请先读 [`kernel/sysproc.c`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/sysproc.c) 中的 `sys_sbrk()` 函数，以及 [`kernel/vm.c`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/vm.c) 中的 `vmfault`。在 [`kernel/trap.c`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/trap.c) 和 [`kernel/vm.c`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/vm.c) 中搜索对 `vmfault` 的调用。
+继续阅读之前，请先读 [`kernel/sysproc.c`](../kernel/sysproc.c) 中的 `sys_sbrk()` 函数，以及 [`kernel/vm.c`](../kernel/vm.c) 中的 `vmfault`。在 [`kernel/trap.c`](../kernel/trap.c) 和 [`kernel/vm.c`](../kernel/vm.c) 中搜索对 `vmfault` 的调用。
 
 ## 5.1 惰性分配
 
@@ -20,15 +20,15 @@ xv6 的**惰性分配**（lazy allocation）分两部分。第一，当应用程
 
 ## 5.2 代码
 
-系统调用 `sbrk(n)` 把进程的内存大小增加 `n` 字节（如果 `n` 为负则减少），并返回新分配区域的起始地址（也就是原来的大小）。内核中的实现是 [`sys_sbrk`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/sysproc.c#L40)。
+系统调用 `sbrk(n)` 把进程的内存大小增加 `n` 字节（如果 `n` 为负则减少），并返回新分配区域的起始地址（也就是原来的大小）。内核中的实现是 [`sys_sbrk`](../kernel/sysproc.c#L40)。
 
-如果应用程序指定了 `SBRK_EAGER`，系统调用由函数 [`growproc`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/proc.c#L236) 实现。`growproc` 调用 `uvmalloc`。[`uvmalloc`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/vm.c#L218) 用 `kalloc` 分配物理内存，把分配的内存清零，并用 `mappages` 向用户页表添加 PTE。
+如果应用程序指定了 `SBRK_EAGER`，系统调用由函数 [`growproc`](../kernel/proc.c#L236) 实现。`growproc` 调用 `uvmalloc`。[`uvmalloc`](../kernel/vm.c#L218) 用 `kalloc` 分配物理内存，把分配的内存清零，并用 `mappages` 向用户页表添加 PTE。
 
 如果应用程序惰性分配内存，`sys_sbrk` 只把进程的大小（`myproc()->sz`）增加 `n` 并返回原来的大小；它不分配物理内存，也不向进程页表添加 PTE。
 
-当进程对一个没有有效页表映射的虚拟地址执行加载或存储时，CPU 会引发**缺页异常**。`usertrap` 检查这种情况[（trap.c:74）](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/trap.c#L74)，并调用 [`vmfault`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/vm.c#L459) 处理缺页。`vmfault` 检查出错地址是否位于之前由 `sbrk` 授予的区域内，用 `kalloc` 分配一页物理内存，把这页清零，再用 `mappages` 向用户页表添加一个 PTE。xv6 在新页的 PTE 中设置 `PTE_W`、`PTE_R`、`PTE_U` 和 `PTE_V` 标志。然后，`usertrap` 让进程从引起缺页的那条指令处恢复执行。由于此时 PTE 已经有效，重新执行的加载或存储指令不会再出错。
+当进程对一个没有有效页表映射的虚拟地址执行加载或存储时，CPU 会引发**缺页异常**。`usertrap` 检查这种情况[（trap.c:74）](../kernel/trap.c#L74)，并调用 [`vmfault`](../kernel/vm.c#L459) 处理缺页。`vmfault` 检查出错地址是否位于之前由 `sbrk` 授予的区域内，用 `kalloc` 分配一页物理内存，把这页清零，再用 `mappages` 向用户页表添加一个 PTE。xv6 在新页的 PTE 中设置 `PTE_W`、`PTE_R`、`PTE_U` 和 `PTE_V` 标志。然后，`usertrap` 让进程从引起缺页的那条指令处恢复执行。由于此时 PTE 已经有效，重新执行的加载或存储指令不会再出错。
 
-如果应用程序以负的 `n` 调用 `sbrk` 来释放内存，`sys_sbrk` 会调用 `growproc`，后者调用 `uvmdealloc`。实际工作由 [`uvmunmap`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/vm.c#L194) 完成，它用 `walk` 查找 PTE。由于有些页可能从未被进程使用过，因而从未由 `vmfault` 分配，`uvmunmap` 会跳过没有 `PTE_V` 标志的 PTE。如果某个 PTE 映射有效，`uvmunmap` 就调用 `kfree` 释放它指向的物理内存。
+如果应用程序以负的 `n` 调用 `sbrk` 来释放内存，`sys_sbrk` 会调用 `growproc`，后者调用 `uvmdealloc`。实际工作由 [`uvmunmap`](../kernel/vm.c#L194) 完成，它用 `walk` 查找 PTE。由于有些页可能从未被进程使用过，因而从未由 `vmfault` 分配，`uvmunmap` 会跳过没有 `PTE_V` 标志的 PTE。如果某个 PTE 映射有效，`uvmunmap` 就调用 `kfree` 释放它指向的物理内存。
 
 注意，xv6 不仅用进程的页表告诉硬件如何映射用户虚拟地址，还把它作为记录哪些物理内存页分配给了该进程的唯一依据。这就是释放用户内存（在 `uvmunmap` 中）需要检查用户页表的原因。
 

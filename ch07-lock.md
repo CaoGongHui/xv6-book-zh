@@ -26,7 +26,7 @@ release(&lk);
 
 *图 7.1：简化的 SMP 架构。*
 
-举个例子说明为什么需要锁：设想两个各有已退出子进程的进程，在两个不同的 CPU 上调用 `wait` 系统调用。`wait` 会释放子进程的内存。因此在每个 CPU 上，内核都会调用 `kfree` 释放子进程的内存页。内核分配器维护一个空闲页链表：[`kalloc()`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/kalloc.c#L69) 从链表中弹出一页内存，[`kfree()`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/kalloc.c#L47) 把一页压入链表。为了获得最佳性能，我们可能希望两个父进程的 `kfree` 并行执行，谁也不用等谁，但按照 xv6 的 `kfree` 实现，这样做是不正确的。
+举个例子说明为什么需要锁：设想两个各有已退出子进程的进程，在两个不同的 CPU 上调用 `wait` 系统调用。`wait` 会释放子进程的内存。因此在每个 CPU 上，内核都会调用 `kfree` 释放子进程的内存页。内核分配器维护一个空闲页链表：[`kalloc()`](../kernel/kalloc.c#L69) 从链表中弹出一页内存，[`kfree()`](../kernel/kalloc.c#L47) 把一页压入链表。为了获得最佳性能，我们可能希望两个父进程的 `kfree` 并行执行，谁也不用等谁，但按照 xv6 的 `kfree` 实现，这样做是不正确的。
 
 图 7.1 更详细地展示了这个场景：空闲页链表位于两个 CPU 共享的内存中，CPU 用 load 和 store 指令操作这个链表。（实际上处理器有缓存，但从概念上讲，多处理器系统的行为就好像只有一块共享内存。）如果没有并发请求，你可能会这样实现链表的 `push` 操作：
 
@@ -90,9 +90,9 @@ release(&lk);
 
 ## 7.2 代码：锁
 
-请阅读 [`kernel/spinlock.h`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/spinlock.h) 和 [`kernel/spinlock.c`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/spinlock.c)。
+请阅读 [`kernel/spinlock.h`](../kernel/spinlock.h) 和 [`kernel/spinlock.c`](../kernel/spinlock.c)。
 
-xv6 有两种锁：**自旋锁**（spinlock）和**睡眠锁**（sleep-lock）。我们先从自旋锁讲起。xv6 用 [`struct spinlock`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/spinlock.h#L2) 表示自旋锁。这个结构中最重要的字段是 `locked`，它是一个字，锁可用时为零，被持有时非零。如果没有并发，xv6 可以用类似下面的代码获取锁：
+xv6 有两种锁：**自旋锁**（spinlock）和**睡眠锁**（sleep-lock）。我们先从自旋锁讲起。xv6 用 [`struct spinlock`](../kernel/spinlock.h#L2) 表示自旋锁。这个结构中最重要的字段是 `locked`，它是一个字，锁可用时为零，被持有时非零。如果没有并发，xv6 可以用类似下面的代码获取锁：
 
 ```c
    void
@@ -118,15 +118,15 @@ C 编译器提供了一系列生成原子指令的“原子”内建函数。xv6
     ;
 ```
 
-xv6 的 [`acquire`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/spinlock.c#L22) 使用的就是上面的循环（7.6 节会解释 `__ATOMIC_ACQUIRE`）。每次迭代把 1 交换进 `lk->locked`，并检查原来的值；如果原来的值是零，就说明我们获取到了锁，而交换操作已经把 `lk->locked` 设为 1。如果原来的值是 1，说明有其他 CPU 持有锁，而我们以原子方式把 1 换进 `lk->locked` 并没有改变它的值。
+xv6 的 [`acquire`](../kernel/spinlock.c#L22) 使用的就是上面的循环（7.6 节会解释 `__ATOMIC_ACQUIRE`）。每次迭代把 1 交换进 `lk->locked`，并检查原来的值；如果原来的值是零，就说明我们获取到了锁，而交换操作已经把 `lk->locked` 设为 1。如果原来的值是 1，说明有其他 CPU 持有锁，而我们以原子方式把 1 换进 `lk->locked` 并没有改变它的值。
 
 获取锁之后，`acquire` 会记录获取锁的 CPU，以便调试。`lk->cpu` 字段受这把锁保护，只能在持有锁时修改。
 
-函数 [`release`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/spinlock.c#L46) 是 `acquire` 的反操作：它清除 `lk->cpu` 字段，然后释放锁。从概念上讲，释放只是把零赋给 `lk->locked`。C 标准允许编译器用多条 store 指令实现一次赋值，所以对并发代码而言，一条 C 赋值语句可能不是原子的。因此，`release` 使用 C 原子函数 `__atomic_store_n(addr, 0, ...)`，以单个不可分割的操作把零存到该地址。
+函数 [`release`](../kernel/spinlock.c#L46) 是 `acquire` 的反操作：它清除 `lk->cpu` 字段，然后释放锁。从概念上讲，释放只是把零赋给 `lk->locked`。C 标准允许编译器用多条 store 指令实现一次赋值，所以对并发代码而言，一条 C 赋值语句可能不是原子的。因此，`release` 使用 C 原子函数 `__atomic_store_n(addr, 0, ...)`，以单个不可分割的操作把零存到该地址。
 
 ## 7.3 代码：使用锁
 
-xv6 在很多地方使用锁来避免竞争。如前所述，[`kalloc`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/kalloc.c#L69) 和 [`kfree`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/kalloc.c#L47) 就是一个好例子。试试练习 1 和练习 2，看看这两个函数省略锁会发生什么。你很可能会发现很难触发错误行为，这说明很难可靠地测试代码是否不存在加锁错误和竞争。xv6 中很可能还有尚未发现的竞争。
+xv6 在很多地方使用锁来避免竞争。如前所述，[`kalloc`](../kernel/kalloc.c#L69) 和 [`kfree`](../kernel/kalloc.c#L47) 就是一个好例子。试试练习 1 和练习 2，看看这两个函数省略锁会发生什么。你很可能会发现很难触发错误行为，这说明很难可靠地测试代码是否不存在加锁错误和竞争。xv6 中很可能还有尚未发现的竞争。
 
 使用锁的一个难点是决定用多少把锁，以及每把锁保护哪些数据和不变式。有几条基本原则。第一，只要某段代码可能导致一个 CPU 写某个内存位置的同时，另一个 CPU 读或写这个位置，就应当用锁来防止这两个操作重叠。第二，记住锁保护的是不变式：如果一个不变式涉及多个内存位置，通常需要用同一把锁保护所有这些位置，才能确保不变式得以维持。
 
@@ -168,7 +168,7 @@ xv6 在很多地方使用锁来避免竞争。如前所述，[`kalloc`](https://
 
 C1/C2 例子的关键问题在于两个 CPU 获取锁的顺序不同。如果它们都先尝试获取 A，就会有一个先获取 A、再获取 B，然后把两把锁都释放，接着另一个 CPU 就能继续执行。更一般地说，加锁代码必须遵守这条规则来避免死锁：所有持有多把锁的代码路径，都必须按相同的顺序获取锁。需要这样一个全局的加锁顺序，意味着锁实际上是每个函数规约的一部分：调用者调用函数的方式，必须使锁按照约定的顺序被获取。
 
-由于 `sleep`/`wakeup` 机制的工作方式（见第 9 章），xv6 中有很多长度为二的加锁顺序链，涉及每进程锁（每个 `struct proc` 中的锁）。例如，[`consoleintr`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/console.c#L147) 是处理键入字符的中断例程。换行符到达时，所有在等待控制台输入的进程都应当被唤醒。为此，`consoleintr` 在持有 `cons.lock` 的同时调用 `wakeup`，而 `wakeup` 会获取等待进程的锁来唤醒它。因此，全局的避免死锁加锁顺序中包含这样一条规则：`cons.lock` 必须在任何进程锁之前获取。xv6 中最长的锁链出现在文件系统代码中。例如，创建一个文件需要同时持有目录的锁、新文件 inode 的锁、一个磁盘块缓冲区的锁、磁盘驱动的 `vdisk_lock`，以及调用进程的 `p->lock`。为了避免死锁，文件系统代码总是按上一句列出的顺序获取锁。
+由于 `sleep`/`wakeup` 机制的工作方式（见第 9 章），xv6 中有很多长度为二的加锁顺序链，涉及每进程锁（每个 `struct proc` 中的锁）。例如，[`consoleintr`](../kernel/console.c#L147) 是处理键入字符的中断例程。换行符到达时，所有在等待控制台输入的进程都应当被唤醒。为此，`consoleintr` 在持有 `cons.lock` 的同时调用 `wakeup`，而 `wakeup` 会获取等待进程的锁来唤醒它。因此，全局的避免死锁加锁顺序中包含这样一条规则：`cons.lock` 必须在任何进程锁之前获取。xv6 中最长的锁链出现在文件系统代码中。例如，创建一个文件需要同时持有目录的锁、新文件 inode 的锁、一个磁盘块缓冲区的锁、磁盘驱动的 `vdisk_lock`，以及调用进程的 `p->lock`。为了避免死锁，文件系统代码总是按上一句列出的顺序获取锁。
 
 遵守一个全局的避免死锁顺序，可能出乎意料地困难。有时加锁顺序与程序的逻辑结构冲突，例如代码模块 M1 调用模块 M2，但加锁顺序要求先获取 M2 中的锁，再获取 M1 中的锁。有时无法预先知道要获取的是哪把锁，可能是因为必须先持有一把锁，才能知道下一把要获取的锁是哪一把。这种情况出现在文件系统逐级查找路径名的各个组成部分时，也出现在 `wait` 和 `exit` 系统调用的代码在进程表中搜索子进程时。最后，死锁的危险常常限制了加锁方案能做得多细，因为锁越多，往往意味着发生死锁的机会越多。避免死锁的需要，常常是内核实现中的一个主要考虑因素。
 
@@ -176,15 +176,15 @@ C1/C2 例子的关键问题在于两个 CPU 获取锁的顺序不同。如果它
 
 ## 7.5 锁与中断
 
-xv6 的有些自旋锁保护的数据会同时被线程和中断处理程序使用。例如，`clockintr` 时钟中断处理程序递增 [`ticks`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/trap.c#L167) 的时候，某个内核线程可能差不多同时在 [`sys_pause`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/sysproc.c#L77) 中读取 `ticks`。锁 `tickslock` 把这两次访问串行化。
+xv6 的有些自旋锁保护的数据会同时被线程和中断处理程序使用。例如，`clockintr` 时钟中断处理程序递增 [`ticks`](../kernel/trap.c#L167) 的时候，某个内核线程可能差不多同时在 [`sys_pause`](../kernel/sysproc.c#L77) 中读取 `ticks`。锁 `tickslock` 把这两次访问串行化。
 
 自旋锁与中断的相互作用带来了一种潜在危险。假设 `sys_pause` 持有 `tickslock`，而它所在的 CPU 被时钟中断打断。`clockintr` 会尝试获取 `tickslock`，发现它已被持有，于是等待它被释放。在这种情况下，`tickslock` 永远不会被释放：只有 `sys_pause` 能释放它，但 `clockintr` 返回之前 `sys_pause` 不会继续运行。于是这个 CPU 会死锁，任何需要这两把锁之一的代码也都会卡住。
 
 为了避免这种情况，如果某个自旋锁会被中断处理程序使用，CPU 就绝不能在开中断的情况下持有这把锁。xv6 更保守：CPU 获取任何锁时，xv6 总会关闭该 CPU 上的中断。其他 CPU 上仍然可能发生中断，所以中断中的 `acquire` 可以等待某个线程释放自旋锁，只是不能在同一个 CPU 上。
 
-当 CPU 不持有任何自旋锁时，xv6 会重新开中断；为了应对嵌套的临界区，它需要做一点簿记。`acquire` 调用 [`push_off`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/spinlock.c#L93)，`release` 调用 [`pop_off`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/spinlock.c#L106)，以跟踪当前 CPU 上锁的嵌套层数。当计数降为零时，`pop_off` 恢复最外层临界区开始时的中断使能状态。`push_off` 和 `pop_off` 通过修改 `sstatus`（Supervisor Status）寄存器中的 `SIE`（Supervisor Interrupt Enable）位，让 CPU 开中断和关中断，用的是 `intr_on` 和 `rc_sstatus(SSTATUS_SIE)`；后者清除 `SIE` 位。
+当 CPU 不持有任何自旋锁时，xv6 会重新开中断；为了应对嵌套的临界区，它需要做一点簿记。`acquire` 调用 [`push_off`](../kernel/spinlock.c#L93)，`release` 调用 [`pop_off`](../kernel/spinlock.c#L106)，以跟踪当前 CPU 上锁的嵌套层数。当计数降为零时，`pop_off` 恢复最外层临界区开始时的中断使能状态。`push_off` 和 `pop_off` 通过修改 `sstatus`（Supervisor Status）寄存器中的 `SIE`（Supervisor Interrupt Enable）位，让 CPU 开中断和关中断，用的是 `intr_on` 和 `rc_sstatus(SSTATUS_SIE)`；后者清除 `SIE` 位。
 
-`acquire` 必须严格在设置 [`lk->locked`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/spinlock.c#L37) 之前调用 `push_off`，这一点很重要。如果两者顺序颠倒，就会有一个短暂的窗口，锁被持有而中断是开着的，一个时机不巧的中断就会让系统死锁。同样，`release` 必须在释放锁之后才调用 `pop_off`[（spinlock.c:73）](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/spinlock.c#L73)。
+`acquire` 必须严格在设置 [`lk->locked`](../kernel/spinlock.c#L37) 之前调用 `push_off`，这一点很重要。如果两者顺序颠倒，就会有一个短暂的窗口，锁被持有而中断是开着的，一个时机不巧的中断就会让系统死锁。同样，`release` 必须在释放锁之后才调用 `pop_off`[（spinlock.c:73）](../kernel/spinlock.c#L73)。
 
 ## 7.6 指令与内存顺序
 
@@ -227,7 +227,7 @@ xv6 自旋锁函数中的屏障，对使用锁的代码有两个重要作用。�
 
 有时 xv6 需要长时间持有一把锁。例如，文件系统（第 10 章）在读写磁盘上文件内容时会一直锁住该文件，而这些磁盘操作可能需要几十毫秒。如果另一个进程想获取这把锁，长时间持有自旋锁就会造成浪费，因为获取锁的进程会在自旋中长时间浪费 CPU。自旋锁的另一个缺点是，进程在持有自旋锁时不能让出 CPU；而我们希望能这样做，好让持有锁的进程在等待磁盘时，其他进程可以使用 CPU。持有自旋锁时让出 CPU 是不合法的，因为如果第二个线程随后尝试获取这把自旋锁，就可能导致死锁：由于 `acquire` 不会让出 CPU，第二个线程的自旋可能使第一个线程无法运行、也就无法释放锁。持有锁时让出 CPU 还会违反持有自旋锁时必须关中断的要求。因此，我们需要这样一种锁：在等待获取时让出 CPU，并且在持有锁期间允许让出 CPU（以及中断）。
 
-xv6 以**睡眠锁**（sleep-lock）的形式提供这种锁。[`acquiresleep`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/sleeplock.c#L22) 在等待时让出 CPU，所用的技术将在第 9 章解释。从高层看，睡眠锁有一个由自旋锁保护的 `locked` 字段。如果睡眠锁已被持有，`acquiresleep` 就释放自旋锁并调用 `sleep`，`sleep` 让出 CPU，直到 `releasesleep` 调用 `wakeup`。结果是，`acquiresleep` 等待期间其他线程可以执行。
+xv6 以**睡眠锁**（sleep-lock）的形式提供这种锁。[`acquiresleep`](../kernel/sleeplock.c#L22) 在等待时让出 CPU，所用的技术将在第 9 章解释。从高层看，睡眠锁有一个由自旋锁保护的 `locked` 字段。如果睡眠锁已被持有，`acquiresleep` 就释放自旋锁并调用 `sleep`，`sleep` 让出 CPU，直到 `releasesleep` 调用 `wakeup`。结果是，`acquiresleep` 等待期间其他线程可以执行。
 
 因为睡眠锁保持中断开启，所以不能在中断处理程序中使用。因为 `acquiresleep` 可能让出 CPU，所以睡眠锁不能在自旋锁的临界区内使用（不过自旋锁可以在睡眠锁的临界区内使用）。
 
@@ -249,7 +249,7 @@ xv6 以**睡眠锁**（sleep-lock）的形式提供这种锁。[`acquiresleep`](
 
 ## 7.10 练习
 
-1. 把 [`kalloc`](https://github.com/mit-pdos/xv6-riscv/blob/riscv/kernel/kalloc.c#L69) 中对 `acquire` 和 `release` 的调用注释掉。这看起来应该会给调用 `kalloc` 的内核代码带来问题；你预计会看到什么症状？运行 xv6 时，你看到这些症状了吗？运行 `usertests` 时呢？如果没有看到问题，为什么？试试在 `kalloc` 的临界区中插入空循环，看能否引发问题。
+1. 把 [`kalloc`](../kernel/kalloc.c#L69) 中对 `acquire` 和 `release` 的调用注释掉。这看起来应该会给调用 `kalloc` 的内核代码带来问题；你预计会看到什么症状？运行 xv6 时，你看到这些症状了吗？运行 `usertests` 时呢？如果没有看到问题，为什么？试试在 `kalloc` 的临界区中插入空循环，看能否引发问题。
 
 2. 假设你改为把 `kfree` 中的加锁注释掉（并恢复 `kalloc` 中的加锁）。现在可能出什么问题？`kfree` 中缺少锁是否比 `kalloc` 中缺少锁危害更小？
 
